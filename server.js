@@ -37,8 +37,8 @@ app.use(limiter);
 // =======================
 
 mongoose.connect(process.env.MONGO_URI)
-.then(() => console.log("MongoDB Connected"))
-.catch(err => console.log(err));
+  .then(() => console.log("MongoDB Connected"))
+  .catch(err => console.log(err));
 
 // =======================
 // SCHEMAS
@@ -52,7 +52,7 @@ const LoveTestSchema = new mongoose.Schema({
   year: String,
   lab: String,
   score: { type: Number, min: 0, max: 100 },
-  createdAt: { type: Date, default: Date.now, index: true }
+  createdAt: { type: Date, default: Date.now }
 });
 
 const ReviewSchema = new mongoose.Schema({
@@ -60,14 +60,14 @@ const ReviewSchema = new mongoose.Schema({
   reviewerBranch: String,
   rating: { type: Number, min: 1, max: 5 },
   reviewText: { type: String, maxlength: 500 },
-  createdAt: { type: Date, default: Date.now, index: true }
+  createdAt: { type: Date, default: Date.now }
 });
 
 const LoveTest = mongoose.model("LoveTest", LoveTestSchema);
 const Review = mongoose.model("Review", ReviewSchema);
 
 // =======================
-// JWT VERIFY MIDDLEWARE
+// ADMIN VERIFY MIDDLEWARE
 // =======================
 
 function verifyAdmin(req, res, next) {
@@ -92,7 +92,7 @@ function verifyAdmin(req, res, next) {
 // SAVE LOVE TEST
 // =======================
 
-app.post("/save-love-test", async (req, res) => {
+app.post("/love-test", async (req, res) => {
   try {
     const { userName, crushName, score } = req.body;
 
@@ -101,9 +101,15 @@ app.post("/save-love-test", async (req, res) => {
     }
 
     const newTest = await LoveTest.create(req.body);
-    res.json({ success: true, data: newTest });
+
+    res.json({
+      success: true,
+      message: "Love test saved successfully",
+      data: newTest
+    });
 
   } catch (err) {
+    console.error(err);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -112,24 +118,30 @@ app.post("/save-love-test", async (req, res) => {
 // SAVE REVIEW
 // =======================
 
-app.post("/save-review", async (req, res) => {
+app.post("/review", async (req, res) => {
   try {
-    const { reviewerName, rating, reviewText } = req.body;
+    const { reviewerName, rating } = req.body;
 
     if (!reviewerName || rating < 1 || rating > 5) {
       return res.status(400).json({ message: "Invalid review data" });
     }
 
     const newReview = await Review.create(req.body);
-    res.json({ success: true, data: newReview });
+
+    res.json({
+      success: true,
+      message: "Review saved successfully",
+      data: newReview
+    });
 
   } catch (err) {
+    console.error(err);
     res.status(500).json({ message: "Server error" });
   }
 });
 
 // =======================
-// ADMIN LOGIN (JWT)
+// ADMIN LOGIN
 // =======================
 
 app.post("/admin-login", (req, res) => {
@@ -152,17 +164,37 @@ app.post("/admin-login", (req, res) => {
 });
 
 // =======================
-// PROTECTED ADMIN ROUTES
+// ADMIN ROUTES (PROTECTED)
 // =======================
 
-app.get("/get-love-tests", verifyAdmin, async (req, res) => {
+app.get("/admin/love-tests", verifyAdmin, async (req, res) => {
   const data = await LoveTest.find().sort({ createdAt: -1 });
   res.json(data);
 });
 
-app.get("/get-reviews", verifyAdmin, async (req, res) => {
+app.get("/admin/reviews", verifyAdmin, async (req, res) => {
   const data = await Review.find().sort({ createdAt: -1 });
   res.json(data);
+});
+
+app.get("/admin/export", verifyAdmin, async (req, res) => {
+  const loveTests = await LoveTest.find();
+  const reviews = await Review.find();
+
+  res.json({
+    loveTests,
+    reviews
+  });
+});
+
+app.post("/admin/clear", verifyAdmin, async (req, res) => {
+  await LoveTest.deleteMany({});
+  await Review.deleteMany({});
+
+  res.json({
+    success: true,
+    message: "All data cleared successfully"
+  });
 });
 
 // =======================
