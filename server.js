@@ -1,5 +1,29 @@
 require("dotenv").config();
 
+// =======================
+// ENVIRONMENT CHECK
+// =======================
+
+const requiredEnvVars = [
+  'MONGO_URI',
+  'JWT_SECRET',
+  'ADMIN_USERNAME',
+  'ADMIN_PASSWORD'
+];
+
+const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
+
+if (missingEnvVars.length > 0) {
+  console.error('❌ Missing required environment variables:');
+  missingEnvVars.forEach(envVar => {
+    console.error(`   - ${envVar}`);
+  });
+  console.error('Please check your .env file or Render environment variables.');
+  process.exit(1);
+}
+
+console.log('✅ All required environment variables are set.');
+
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -18,17 +42,23 @@ app.use(helmet());
 app.use(cors({
   origin: [
     "https://valentinesbjit.in",
-    "https://www.valentinesbjit.in"
+    "https://www.valentinesbjit.in",
+    "http://localhost:3000"
   ],
   methods: ["GET", "POST"],
-  credentials: true
+  credentials: true,
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
 app.use(express.json({ limit: "10kb" }));
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200
+  max: 200,
+  message: {
+    success: false,
+    message: "Too many requests, please try again later."
+  }
 });
 app.use(limiter);
 
@@ -36,31 +66,82 @@ app.use(limiter);
 // CONNECT TO MONGODB
 // =======================
 
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB Connected"))
-  .catch(err => console.log(err));
+console.log("🔗 Connecting to MongoDB...");
+
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
+})
+.then(() => console.log("✅ MongoDB Connected Successfully"))
+.catch(err => {
+  console.error("❌ MongoDB Connection Error:", err);
+  process.exit(1);
+});
 
 // =======================
-// SCHEMAS
+// SCHEMAS WITH INDEXES
 // =======================
 
 const LoveTestSchema = new mongoose.Schema({
-  userName: { type: String, required: true, maxlength: 50 },
-  userBranch: String,
-  crushName: { type: String, required: true, maxlength: 50 },
+  userName: { 
+    type: String, 
+    required: true, 
+    maxlength: 50,
+    index: true 
+  },
+  userBranch: { 
+    type: String, 
+    index: true 
+  },
+  crushName: { 
+    type: String, 
+    required: true, 
+    maxlength: 50 
+  },
   crushBranch: String,
   year: String,
   lab: String,
-  score: { type: Number, min: 0, max: 100 },
-  createdAt: { type: Date, default: Date.now }
+  score: { 
+    type: Number, 
+    min: 0, 
+    max: 100,
+    index: true 
+  },
+  createdAt: { 
+    type: Date, 
+    default: Date.now, 
+    index: true 
+  }
 });
 
 const ReviewSchema = new mongoose.Schema({
-  reviewerName: { type: String, required: true, maxlength: 50 },
-  reviewerBranch: String,
-  rating: { type: Number, min: 1, max: 5 },
-  reviewText: { type: String, maxlength: 500 },
-  createdAt: { type: Date, default: Date.now }
+  reviewerName: { 
+    type: String, 
+    required: true, 
+    maxlength: 50,
+    index: true 
+  },
+  reviewerBranch: { 
+    type: String, 
+    index: true 
+  },
+  rating: { 
+    type: Number, 
+    min: 1, 
+    max: 5,
+    index: true 
+  },
+  reviewText: { 
+    type: String, 
+    maxlength: 500 
+  },
+  createdAt: { 
+    type: Date, 
+    default: Date.now, 
+    index: true 
+  }
 });
 
 const LoveTest = mongoose.model("LoveTest", LoveTestSchema);
@@ -74,7 +155,10 @@ function verifyAdmin(req, res, next) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader) {
-    return res.status(401).json({ message: "No token provided" });
+    return res.status(401).json({ 
+      success: false,
+      message: "No token provided" 
+    });
   }
 
   const token = authHeader.split(" ")[1];
@@ -84,20 +168,50 @@ function verifyAdmin(req, res, next) {
     req.admin = decoded;
     next();
   } catch (err) {
-    return res.status(401).json({ message: "Invalid or expired token" });
+    return res.status(401).json({ 
+      success: false,
+      message: "Invalid or expired token" 
+    });
   }
 }
 
 // =======================
-// SAVE LOVE TEST
+// PUBLIC ROUTES
 // =======================
 
-app.post("/love-test", async (req, res) => {
+// 公开获取评论（前端评论部分需要）
+app.get("/get-reviews", async (req, res) => {
+  try {
+    const data = await Review.find().sort({ createdAt: -1 }).limit(50);
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ 
+      success: false,
+      message: "Server error" 
+    });
+  }
+});
+
+// 公开保存爱情测试
+app.post("/save-love-test", async (req, res) => {
   try {
     const { userName, crushName, score } = req.body;
 
-    if (!userName || !crushName || score < 0 || score > 100) {
-      return res.status(400).json({ message: "Invalid input data" });
+    // 改进的验证
+    if (
+      !userName ||
+      !crushName ||
+      typeof score !== "number" ||
+      score < 0 ||
+      score > 100 ||
+      userName.length > 50 ||
+      crushName.length > 50
+    ) {
+      return res.status(400).json({ 
+        success: false,
+        message: "Invalid input data" 
+      });
     }
 
     const newTest = await LoveTest.create(req.body);
@@ -110,20 +224,31 @@ app.post("/love-test", async (req, res) => {
 
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ 
+      success: false,
+      message: "Server error" 
+    });
   }
 });
 
-// =======================
-// SAVE REVIEW
-// =======================
-
-app.post("/review", async (req, res) => {
+// 公开保存评论
+app.post("/save-review", async (req, res) => {
   try {
-    const { reviewerName, rating } = req.body;
+    const { reviewerName, rating, reviewText } = req.body;
 
-    if (!reviewerName || rating < 1 || rating > 5) {
-      return res.status(400).json({ message: "Invalid review data" });
+    // 改进的验证
+    if (
+      !reviewerName ||
+      typeof rating !== "number" ||
+      rating < 1 ||
+      rating > 5 ||
+      reviewerName.length > 50 ||
+      (reviewText && reviewText.length > 500)
+    ) {
+      return res.status(400).json({ 
+        success: false,
+        message: "Invalid review data" 
+      });
     }
 
     const newReview = await Review.create(req.body);
@@ -136,7 +261,10 @@ app.post("/review", async (req, res) => {
 
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ 
+      success: false,
+      message: "Server error" 
+    });
   }
 });
 
@@ -157,44 +285,106 @@ app.post("/admin-login", (req, res) => {
       { expiresIn: "2h" }
     );
 
-    return res.json({ success: true, token });
+    return res.json({ 
+      success: true, 
+      token 
+    });
   }
 
-  return res.status(401).json({ success: false, message: "Invalid credentials" });
+  return res.status(401).json({ 
+    success: false, 
+    message: "Invalid credentials" 
+  });
 });
 
 // =======================
 // ADMIN ROUTES (PROTECTED)
 // =======================
 
-app.get("/admin/love-tests", verifyAdmin, async (req, res) => {
-  const data = await LoveTest.find().sort({ createdAt: -1 });
-  res.json(data);
+// 管理员获取爱情测试数据（需要token）
+app.get("/get-love-tests", verifyAdmin, async (req, res) => {
+  try {
+    const data = await LoveTest.find().sort({ createdAt: -1 });
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ 
+      success: false,
+      message: "Server error" 
+    });
+  }
 });
 
-app.get("/admin/reviews", verifyAdmin, async (req, res) => {
-  const data = await Review.find().sort({ createdAt: -1 });
-  res.json(data);
+// 管理员获取评论数据（需要token）- 新路由
+app.get("/get-reviews-admin", verifyAdmin, async (req, res) => {
+  try {
+    const data = await Review.find().sort({ createdAt: -1 });
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ 
+      success: false,
+      message: "Server error" 
+    });
+  }
 });
 
 app.get("/admin/export", verifyAdmin, async (req, res) => {
-  const loveTests = await LoveTest.find();
-  const reviews = await Review.find();
+  try {
+    const loveTests = await LoveTest.find();
+    const reviews = await Review.find();
 
-  res.json({
-    loveTests,
-    reviews
-  });
+    res.json({
+      success: true,
+      data: {
+        loveTests,
+        reviews,
+        exportedAt: new Date().toISOString(),
+        totalRecords: loveTests.length + reviews.length
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ 
+      success: false,
+      message: "Server error" 
+    });
+  }
 });
 
 app.post("/admin/clear", verifyAdmin, async (req, res) => {
-  await LoveTest.deleteMany({});
-  await Review.deleteMany({});
+  try {
+    // 添加额外的确认检查
+    const { confirmation } = req.body;
+    
+    if (confirmation !== 'CONFIRM_DELETE_ALL') {
+      return res.status(400).json({
+        success: false,
+        message: "Confirmation required"
+      });
+    }
 
-  res.json({
-    success: true,
-    message: "All data cleared successfully"
-  });
+    const loveTestsCount = await LoveTest.countDocuments();
+    const reviewsCount = await Review.countDocuments();
+    
+    await LoveTest.deleteMany({});
+    await Review.deleteMany({});
+
+    res.json({
+      success: true,
+      message: "All data cleared successfully",
+      deleted: {
+        loveTests: loveTestsCount,
+        reviews: reviewsCount
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ 
+      success: false,
+      message: "Server error" 
+    });
+  }
 });
 
 // =======================
@@ -202,10 +392,71 @@ app.post("/admin/clear", verifyAdmin, async (req, res) => {
 // =======================
 
 app.get("/", (req, res) => {
-  res.send("SBJIT Valentine Backend Running Securely");
+  res.json({
+    success: true,
+    message: "SBJIT Valentine Backend Running Securely",
+    timestamp: new Date().toISOString(),
+    version: "1.0.0",
+    database: mongoose.connection.readyState === 1 ? "connected" : "disconnected"
+  });
 });
 
 // =======================
+// ERROR HANDLING MIDDLEWARE
+// =======================
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Server Running on port " + PORT));
+app.use((err, req, res, next) => {
+  console.error('Unhandled Error:', err);
+  res.status(500).json({
+    success: false,
+    message: "Internal server error"
+  });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: "Route not found"
+  });
+});
+
+// =======================
+// START SERVER AFTER DB CONNECTION
+// =======================
+
+mongoose.connection.once("open", () => {
+  console.log("✅ MongoDB Connection Established");
+  
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`✅ Server Running on port ${PORT}`);
+    console.log(`✅ Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`✅ Backend URL: https://my-backend-tiz0.onrender.com`);
+    console.log(`✅ Admin Panel Ready`);
+    console.log(`✅ Public Routes: /get-reviews, /save-love-test, /save-review`);
+    console.log(`✅ Admin Routes: /admin-login, /get-love-tests, /get-reviews-admin`);
+  });
+});
+
+// 数据库连接错误处理
+mongoose.connection.on("error", (err) => {
+  console.error("❌ MongoDB Connection Error:", err);
+});
+
+// 数据库断开连接处理
+mongoose.connection.on("disconnected", () => {
+  console.warn("⚠️ MongoDB Disconnected. Attempting to reconnect...");
+});
+
+// 处理未捕获的异常
+process.on("uncaughtException", (err) => {
+  console.error("❌ Uncaught Exception:", err);
+  process.exit(1);
+});
+
+// 处理未处理的Promise拒绝
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("❌ Unhandled Promise Rejection at:", promise, "reason:", reason);
+  process.exit(1);
+});
